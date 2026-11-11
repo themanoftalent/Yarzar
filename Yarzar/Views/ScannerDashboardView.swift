@@ -35,13 +35,17 @@ struct ScannerDashboardView: View {
     @State private var customBrand: String = ""
     @State private var customDomain: ProductDomain = .food
     @State private var customOrganic: Bool = false
-    @State private var customIngredients: String = "Sugar, Palm Oil, Hazelnuts (13%), Skimmed Milk Powder, Lecithins (E322), Sodium Nitrite (E250), Tartrazine (E102)"
+    @State private var customIngredients: String = ""
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 scannerHeaderBar
                 inputModeCard
+
+                if !store.liveSearchResults.isEmpty {
+                    liveSearchResultsSection
+                }
 
                 if let selected = store.selectedProduct {
                     ProductDetailView(
@@ -103,7 +107,7 @@ struct ScannerDashboardView: View {
         }
     }
 
-    // MARK: - Tab 0: Barcode Lookup + Quick Presets
+    // MARK: - Tab 0: Live Barcode & Global Product Search
     private var barcodeLookupPanel: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 10) {
@@ -111,9 +115,9 @@ struct ScannerDashboardView: View {
                     .font(.system(size: 18, weight: .bold))
                     .foregroundStyle(YarzarTheme.emerald)
 
-                TextField(L("Enter EAN-13 / UPC barcode (e.g. 3017620422003)..."), text: $barcodeInput)
+                TextField(L("Enter EAN/UPC barcode OR search any product/brand (e.g. Nutella, Ülker, CeraVe, Pınar)..."), text: $barcodeInput)
                     .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 13, design: .monospaced))
+                    .font(.system(size: 13))
                     .onSubmit {
                         Task { await store.lookupBarcode(barcodeInput) }
                     }
@@ -121,34 +125,48 @@ struct ScannerDashboardView: View {
                 Button {
                     Task { await store.lookupBarcode(barcodeInput) }
                 } label: {
-                    if store.isLookingUpBarcode {
+                    if store.isLookingUpBarcode || store.isSearchingOnline {
                         HStack(spacing: 6) {
                             ProgressView().controlSize(.small)
                             Text(L("Looking up product…"))
                         }
                     } else {
-                        Label(L("Lookup Barcode"), systemImage: "magnifyingglass")
+                        Label(L("Search / Lookup"), systemImage: "magnifyingglass")
                     }
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(YarzarTheme.emerald)
-                .disabled(store.isLookingUpBarcode)
+                .disabled(store.isLookingUpBarcode || store.isSearchingOnline)
             }
 
             if let msg = store.lookupStatusMessage {
-                Text(msg)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(YarzarTheme.emerald)
+                HStack {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(YarzarTheme.emerald)
+                    Text(msg)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(YarzarTheme.emerald)
+                    Spacer()
+                    if !store.liveSearchResults.isEmpty {
+                        Button(L("Clear Results")) {
+                            store.liveSearchResults = []
+                        }
+                        .buttonStyle(.plain)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    }
+                }
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                Text(L("Quick Sample Barcodes"))
+                Text(store.scannedHistory.isEmpty ? L("Reference Benchmarks (Food, Cosmetics & Whole Foods)") : L("Recently Scanned & Inspected"))
                     .font(.system(size: 11, weight: .bold, design: .rounded))
                     .foregroundStyle(.secondary)
 
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
-                        ForEach(store.products.prefix(9)) { item in
+                        let sourceList = store.scannedHistory.isEmpty ? Array(store.products.prefix(10)) : Array(store.scannedHistory.prefix(10))
+                        ForEach(sourceList) { item in
                             Button {
                                 barcodeInput = item.barcode
                                 store.selectAndRecordScan(item)
@@ -186,6 +204,79 @@ struct ScannerDashboardView: View {
         .yarzarCard(accent: YarzarTheme.emerald)
     }
 
+    private var liveSearchResultsSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label(L("Live OpenFacts Database Results"), systemImage: "globe.europe.africa.fill")
+                    .font(.system(size: 13.5, weight: .bold, design: .rounded))
+                    .foregroundStyle(YarzarTheme.emerald)
+                Text("(\(store.liveSearchResults.count))")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(store.liveSearchResults) { item in
+                        Button {
+                            store.selectAndRecordScan(item)
+                        } label: {
+                            HStack(spacing: 10) {
+                                ZStack {
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .fill(item.scoreColor.opacity(0.12))
+                                        .frame(width: 42, height: 42)
+                                    if let urlStr = item.imageURL, let url = URL(string: urlStr) {
+                                        AsyncImage(url: url) { phase in
+                                            switch phase {
+                                            case .success(let img):
+                                                img.resizable().scaledToFill()
+                                                    .frame(width: 42, height: 42)
+                                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                                            default:
+                                                Text(item.emojiIcon).font(.system(size: 20))
+                                            }
+                                        }
+                                    } else {
+                                        Text(item.emojiIcon).font(.system(size: 20))
+                                    }
+                                }
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(item.name)
+                                        .font(.system(size: 12, weight: .bold))
+                                        .lineLimit(1)
+                                    Text("\(item.brand) · \(item.barcode)")
+                                        .font(.system(size: 10.5))
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+                                .frame(maxWidth: 165, alignment: .leading)
+
+                                YarzarScoreRing(score: item.totalScore, size: 36, lineWidth: 4)
+                            }
+                            .padding(10)
+                            .background(
+                                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                    .fill(Color(nsColor: .windowBackgroundColor).opacity(0.85))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                    .strokeBorder(
+                                        store.selectedProduct?.barcode == item.barcode ? YarzarTheme.emerald : item.scoreColor.opacity(0.3),
+                                        lineWidth: store.selectedProduct?.barcode == item.barcode ? 2 : 1
+                                    )
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+        .padding(14)
+        .yarzarCard(accent: YarzarTheme.mintTeal)
+    }
+
     // MARK: - Tab 1: Live Camera Barcode Scanner
     private var cameraScannerPanel: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -206,7 +297,7 @@ struct ScannerDashboardView: View {
 
             if cameraScanner.isRunning {
                 CameraPreviewView(session: cameraScanner.session)
-                    .frame(height: 220)
+                    .frame(height: 240)
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     .overlay(
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -277,6 +368,15 @@ struct ScannerDashboardView: View {
                     RoundedRectangle(cornerRadius: 8)
                         .fill(Color(nsColor: .textBackgroundColor))
                 )
+                .overlay(alignment: .topLeading) {
+                    if customIngredients.isEmpty {
+                        Text("Paste ingredients or INCI list here (e.g. Aqua, Glycerin, Niacinamide, Phenoxyethanol, E250, E322)...")
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundStyle(.tertiary)
+                            .padding(11)
+                            .allowsHitTesting(false)
+                    }
+                }
 
             HStack {
                 Spacer()
@@ -294,6 +394,7 @@ struct ScannerDashboardView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(YarzarTheme.emerald)
+                .disabled(customIngredients.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
         .padding(16)

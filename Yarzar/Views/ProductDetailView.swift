@@ -38,9 +38,26 @@ struct ProductDetailView: View {
             ZStack {
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .fill(product.scoreColor.opacity(0.12))
-                    .frame(width: 72, height: 72)
-                Text(product.emojiIcon)
-                    .font(.system(size: 38))
+                    .frame(width: 78, height: 78)
+
+                if let urlStr = product.imageURL, let url = URL(string: urlStr) {
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case .success(let image):
+                            image
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: 78, height: 78)
+                                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        default:
+                            Text(product.emojiIcon)
+                                .font(.system(size: 38))
+                        }
+                    }
+                } else {
+                    Text(product.emojiIcon)
+                        .font(.system(size: 38))
+                }
             }
 
             VStack(alignment: .leading, spacing: 5) {
@@ -61,6 +78,24 @@ struct ProductDetailView: View {
                             .background(Capsule().fill(YarzarTheme.emerald.opacity(0.14)))
                     }
 
+                    if let nutri = product.nutriScoreGrade {
+                        Text("Nutri-Score \(nutri)")
+                            .font(.system(size: 10.5, weight: .bold, design: .rounded))
+                            .foregroundStyle(YarzarTheme.clinicalCyan)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2.5)
+                            .background(Capsule().fill(YarzarTheme.clinicalCyan.opacity(0.14)))
+                    }
+
+                    if let nova = product.novaGroup {
+                        Text("NOVA \(nova)")
+                            .font(.system(size: 10.5, weight: .bold, design: .monospaced))
+                            .foregroundStyle(nova >= 4 ? YarzarTheme.crimsonPoor : YarzarTheme.emerald)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2.5)
+                            .background(Capsule().fill((nova >= 4 ? YarzarTheme.crimsonPoor : YarzarTheme.emerald).opacity(0.14)))
+                    }
+
                     Text(product.barcode)
                         .font(.system(size: 11, weight: .medium, design: .monospaced))
                         .foregroundStyle(.secondary)
@@ -68,9 +103,16 @@ struct ProductDetailView: View {
 
                 Text(product.name)
                     .font(.system(size: 20, weight: .bold, design: .rounded))
-                Text("\(product.brand) · \(product.category)")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    Text("\(product.brand) · \(product.category)")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.secondary)
+                    if let serving = product.servingSize, !serving.isEmpty {
+                        Text("· \(serving)")
+                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
+                }
 
                 HStack(spacing: 8) {
                     Button {
@@ -84,6 +126,18 @@ struct ProductDetailView: View {
                     }
                     .buttonStyle(.bordered)
                     .tint(product.isFavorite ? .pink : .secondary)
+
+                    Button {
+                        store.toggleOrganicStatus(for: product)
+                    } label: {
+                        Label(
+                            L(product.isOrganic ? "Organic (+10 pts)" : "Set Organic"),
+                            systemImage: product.isOrganic ? "checkmark.seal.fill" : "leaf"
+                        )
+                        .font(.caption.weight(.semibold))
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(product.isOrganic ? YarzarTheme.emerald : .secondary)
 
                     if let onSelectComparison {
                         Button {
@@ -338,12 +392,17 @@ struct ProductDetailView: View {
         .yarzarCard(accent: YarzarTheme.emerald)
     }
 
-    // MARK: - 6. Nuanced Additives Section
+    // MARK: - 6. Nuanced Additives Section (With Live Dose-Aware Recalculation!)
     private var additivesSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text(L("Nuanced Additive & Ingredient Analysis"))
-                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(L("Nuanced Additive & Ingredient Analysis"))
+                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                    Text(L("Adjust additive concentration tier below to see real-time dose-weighted score impact."))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
                 Text("\(product.additives.count)")
                     .font(.system(size: 11, weight: .bold, design: .monospaced))
@@ -363,7 +422,7 @@ struct ProductDetailView: View {
                 .padding(.vertical, 4)
             } else {
                 ForEach(product.additives) { additive in
-                    VStack(alignment: .leading, spacing: 6) {
+                    VStack(alignment: .leading, spacing: 7) {
                         HStack(spacing: 8) {
                             Text(additive.code)
                                 .font(.system(size: 11, weight: .bold, design: .monospaced))
@@ -381,13 +440,30 @@ struct ProductDetailView: View {
 
                             Spacer()
 
-                            // Nuanced Concentration Tier Badge (Overcoming Yuka's binary penalty!)
-                            Text(L(additive.concentrationTier.rawValue))
-                                .font(.system(size: 10.5, weight: .semibold))
-                                .foregroundStyle(YarzarTheme.clinicalCyan)
-                                .padding(.horizontal, 7)
-                                .padding(.vertical, 2)
-                                .background(Capsule().fill(YarzarTheme.clinicalCyan.opacity(0.14)))
+                            // Interactive Dose / Concentration Tier Selector
+                            HStack(spacing: 4) {
+                                ForEach(AdditiveConcentrationTier.allCases, id: \.self) { tier in
+                                    let isSelected = additive.concentrationTier == tier
+                                    Button {
+                                        store.updateAdditiveConcentration(
+                                            for: product,
+                                            additiveCode: additive.code,
+                                            newTier: tier
+                                        )
+                                    } label: {
+                                        Text(L(tier.shortTitle))
+                                            .font(.system(size: 10, weight: isSelected ? .bold : .medium))
+                                            .foregroundStyle(isSelected ? .white : YarzarTheme.clinicalCyan)
+                                            .padding(.horizontal, 7)
+                                            .padding(.vertical, 2.5)
+                                            .background(
+                                                Capsule()
+                                                    .fill(isSelected ? YarzarTheme.clinicalCyan : YarzarTheme.clinicalCyan.opacity(0.12))
+                                            )
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
 
                             Text(L(additive.riskLevel.rawValue))
                                 .font(.system(size: 10.5, weight: .bold))
@@ -446,12 +522,25 @@ struct ProductDetailView: View {
 
             ForEach(alternatives) { alt in
                 HStack(spacing: 12) {
-                    Text(alt.emojiIcon)
-                        .font(.system(size: 26))
+                    if let urlStr = alt.imageURL, let url = URL(string: urlStr) {
+                        AsyncImage(url: url) { phase in
+                            switch phase {
+                            case .success(let img):
+                                img.resizable().scaledToFill()
+                                    .frame(width: 38, height: 38)
+                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                            default:
+                                Text(alt.emojiIcon).font(.system(size: 24))
+                            }
+                        }
+                    } else {
+                        Text(alt.emojiIcon)
+                            .font(.system(size: 26))
+                    }
                     VStack(alignment: .leading, spacing: 2) {
                         Text(alt.name)
                             .font(.system(size: 13, weight: .bold))
-                        Text(alt.brand)
+                        Text("\(alt.brand) · \(alt.barcode)")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }

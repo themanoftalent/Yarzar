@@ -29,6 +29,8 @@ struct CatalogBrowserView: View {
 
                 if filterDomain == .wholeFood {
                     wholeFoodBanner
+                } else {
+                    onlineSearchBar
                 }
 
                 LazyVStack(spacing: 12) {
@@ -40,6 +42,46 @@ struct CatalogBrowserView: View {
             .padding(20)
         }
         .searchable(text: $searchText, prompt: L("Search products, brands, barcodes, or ingredients…"))
+        .onSubmit(of: .search) {
+            if !searchText.trimmingCharacters(in: .whitespaces).isEmpty && filterDomain != .wholeFood {
+                Task {
+                    await store.searchOnlineCatalog(query: searchText, domain: filterDomain ?? selectedDomain)
+                }
+            }
+        }
+    }
+
+    private var onlineSearchBar: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "globe")
+                .foregroundStyle(YarzarTheme.emerald)
+            TextField(L("Search 3,000,000+ real products on OpenFoodFacts & OpenBeautyFacts..."), text: $searchText)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit {
+                    Task {
+                        await store.searchOnlineCatalog(query: searchText, domain: filterDomain ?? selectedDomain)
+                    }
+                }
+            Button {
+                Task {
+                    await store.searchOnlineCatalog(query: searchText, domain: filterDomain ?? selectedDomain)
+                }
+            } label: {
+                if store.isSearchingOnline {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text(L("Searching…"))
+                    }
+                } else {
+                    Label(L("Search Online"), systemImage: "magnifyingglass")
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(YarzarTheme.emerald)
+            .disabled(searchText.trimmingCharacters(in: .whitespaces).isEmpty || store.isSearchingOnline)
+        }
+        .padding(14)
+        .yarzarCard(accent: YarzarTheme.emerald)
     }
 
     private var headerSection: some View {
@@ -92,8 +134,24 @@ struct CatalogBrowserView: View {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .fill(item.scoreColor.opacity(0.12))
                     .frame(width: 54, height: 54)
-                Text(item.emojiIcon)
-                    .font(.system(size: 28))
+                if let urlStr = item.imageURL, let url = URL(string: urlStr) {
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case .success(let image):
+                            image
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: 54, height: 54)
+                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        default:
+                            Text(item.emojiIcon)
+                                .font(.system(size: 28))
+                        }
+                    }
+                } else {
+                    Text(item.emojiIcon)
+                        .font(.system(size: 28))
+                }
             }
 
             VStack(alignment: .leading, spacing: 3) {
